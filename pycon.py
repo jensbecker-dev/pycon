@@ -46,7 +46,7 @@ def main():
 
     # Starting port scan
     cprint(f"\n[*] Starting port scan for target: {target_domain}", 'yellow', attrs=['bold'])
-    ports_input = "1-1024"  # Default port range
+    ports_input = "1-10524"  # Default port range
     num_threads_ports = 10  # Default number of threads for port scanning
     ports_list = []
     for part in ports_input.split(','):

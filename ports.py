@@ -100,7 +100,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Port scanning and service enumeration tool.")
     parser.add_argument('--target', type=str, required=True, help="The target domain or IP address (e.g., example.com)")
-    parser.add_argument('--ports', type=str, default="1-1024", help="Comma-separated list of ports or range (e.g., 1-1024, 80, 443)")
+    parser.add_argument('--ports', type=str, default="1-10000", help="Comma-separated list of ports or range (e.g., 1-1024, 80, 443)")
     parser.add_argument('--threads', type=int, default=10, help="Number of threads for port scanning (default: 10)")
     args = parser.parse_args()
     target = args.target.strip()
