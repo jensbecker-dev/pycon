@@ -104,6 +104,23 @@ async def async_directory_check(session: aiohttp.ClientSession, url: str, semaph
     
     return None
 
+async def cancel_all_tasks(task_list):
+    """Cancel all tasks and wait for them to complete with proper exception handling"""
+    if not task_list:
+        return
+            
+    # First cancel all tasks
+    for t in task_list:
+        if not t.done() and not t.cancelled():
+            t.cancel()
+                
+    # Then await their cancellation with exception handling
+    # Use gather with return_exceptions to prevent exceptions from propagating
+    await asyncio.gather(*task_list, return_exceptions=True)
+    
+    # Explicitly clear the list to help garbage collection
+    task_list.clear()
+
 async def async_directory_enumeration(domain: str, wordlist: List[str], 
                                      max_concurrent: int = 40) -> Dict[str, str]:
     """
@@ -136,6 +153,7 @@ async def async_directory_enumeration(domain: str, wordlist: List[str],
 
     tasks = []
     task_cancellation_requested = False
+    current_batch_tasks = []
     
     # Define a helper function to handle proper task cleanup
     async def cancel_all_tasks(task_list):

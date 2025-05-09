@@ -89,7 +89,7 @@ async def run_subdomain_scan(target_domain):
     return found_subdomains
 
 async def run_directory_scan(target_domain, wordlist_path, num_threads_dir):
-    console.print(f"\n[yellow]Starting directory scan with wordlist: {wordlist_path}[/yellow\n]")
+    console.print(f"\n[yellow]Starting directory scan with wordlist: {wordlist_path}[/yellow]")
     
     dir_wordlist_items = import_wordlist(wordlist_path)
     if not dir_wordlist_items:
@@ -101,6 +101,9 @@ async def run_directory_scan(target_domain, wordlist_path, num_threads_dir):
         # Run the enhanced async directory scan with status information
         found_directories = await dir_en.async_directory_enumeration(target_domain, dir_wordlist_items, max_concurrent=num_threads_dir)
         return found_directories
+    except asyncio.CancelledError:
+        console.print(f"[yellow]Directory scan with {wordlist_path} was cancelled. Partial results will be returned.[/yellow]")
+        raise  # Re-raise to propagate cancellation
     except Exception as e:
         console.print(f"[red]Error during directory scan: {str(e)}[/red]")
         return {}
@@ -198,6 +201,7 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
 
 async def main_async(args):
     all_tasks_completed_gracefully = False
+    tasks = []  # Store tasks for proper cleanup
     try:
         target_domain = args.target.strip()
         wordlist_path_dir_primary = args.wordlist_dir.strip()
@@ -243,17 +247,42 @@ async def main_async(args):
 
         console.print(f"\n[+] Custom and range ports to scan: {ports_list}\n")
 
-        tasks = [
-            run_port_scan(target_domain, ports_list, num_threads_ports),
-            run_subdomain_scan(target_domain),
-            run_directory_scan(target_domain, wordlist_path_dir_primary, num_threads_dir),
-            run_directory_scan(target_domain, wordlist_path_dir_secondary, num_threads_dir),
-        ]
+        # Create tasks
+        port_scan_task = asyncio.create_task(
+            run_port_scan(target_domain, ports_list, num_threads_ports)
+        )
+        subdomain_scan_task = asyncio.create_task(
+            run_subdomain_scan(target_domain)
+        )
+        dir_scan_task1 = asyncio.create_task(
+            run_directory_scan(target_domain, wordlist_path_dir_primary, num_threads_dir)
+        )
+        dir_scan_task2 = asyncio.create_task(
+            run_directory_scan(target_domain, wordlist_path_dir_secondary, num_threads_dir)
+        )
+        
+        # Store tasks for cleanup
+        tasks = [port_scan_task, subdomain_scan_task, dir_scan_task1, dir_scan_task2]
         
         results = []
         with console.status("[bold green]Running scans...") as status:
-            # Use return_exceptions=True to allow all tasks to run and collect all results/exceptions
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Wait for all tasks with proper cancellation handling
+            try:
+                # Use return_exceptions=True to handle task-specific exceptions
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                # If main task is cancelled, cancel all subtasks
+                console.print("[yellow]Cancellation requested. Cleaning up tasks...[/yellow]")
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                
+                # Give tasks some time to process cancellation
+                try:
+                    await asyncio.wait(tasks, timeout=2.0)
+                except Exception:
+                    pass
+                raise
         
         # Process results, checking for exceptions
         ports_found = results[0] if not isinstance(results[0], Exception) else {}
@@ -283,9 +312,30 @@ async def main_async(args):
         console.print("\n[yellow bold]Scan process cancelled by user. Finalizing...[/yellow bold]")
     except KeyboardInterrupt: 
         console.print("\n[red bold]KeyboardInterrupt directly caught in main_async. Exiting.[/red bold]")
+        # Cancel all tasks
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        # Give tasks some time to process cancellation
+        try:
+            await asyncio.wait(tasks, timeout=2.0)
+        except Exception:
+            pass
     except Exception as e:
         console.print(f"\n[red bold]An unexpected error occurred in main_async: {type(e).__name__} - {e}[/red bold]")
     finally:
+        # Ensure all tasks are cancelled
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        
+        # Wait briefly for tasks to finish their cancellation
+        if tasks:
+            try:
+                await asyncio.wait(tasks, timeout=1.0)
+            except Exception:
+                pass
+                
         if not all_tasks_completed_gracefully:
             console.print("\n[blue bold]Scan process did not complete all tasks gracefully or was interrupted.[/blue bold]")
         else:
