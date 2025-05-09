@@ -121,9 +121,9 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
         
         if not base_domain_valid:
             if console:
-                console.print(f"[yellow][-] Warning: Base domain {domain} could not be resolved. Results may be unreliable.[/yellow]")
+                console.print(f"\n[yellow][-] Warning: Base domain {domain} could not be resolved. Results may be unreliable.[/yellow]\n")
             else:
-                cprint(f"[-] Warning: Base domain {domain} could not be resolved. Results may be unreliable.\n", 'yellow')
+                cprint(f"\n[-] Warning: Base domain {domain} could not be resolved. Results may be unreliable.\n", 'yellow')
 
         def check_subdomain(sub, domain_to_check, queue_instance):
             if stop_event.is_set():
