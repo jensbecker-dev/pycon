@@ -212,7 +212,7 @@ async def main_async(args):
         console.print(f"\n[yellow bold]Target: {target_domain}[/yellow bold]")
         
         # Default port range and custom ports
-        ports_input = "1-1052" 
+        ports_input = "1-1024"  # Default port range
         custom_ports = ["3389", "3390", "4000", "4444", "5000", "8000", "8080", "8443", "8888"]
         print("\n[+]  Custom ports: ", custom_ports, "\n")
         # Number of threads for port scanning
