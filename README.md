@@ -1,5 +1,5 @@
 # P Y C O N
-![PYCON](screenshots/enum_ps.png)
+![PYCONTOOOL](screenshots/pycon.png)
 
 
 PyCon is a Python-based tool for performing subdomain and directory enumeration on a target domain. It utilizes wordlists to discover potential subdomains and directories, helping in the reconnaissance phase of a security assessment.
