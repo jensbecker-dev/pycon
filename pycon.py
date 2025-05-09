@@ -46,9 +46,18 @@ def main():
 
     # Starting port scan
     cprint(f"\n[*] Starting port scan for target: {target_domain}", 'yellow', attrs=['bold'])
-    ports_input = "1-10524"  # Default port range
+    ports_input = "1-1052"  # Default port range
+    custom_ports =["3389", "3390", "4000", "4444", "5000", "8000", "8080", "8443", "8888"]  # Custom ports
     num_threads_ports = 10  # Default number of threads for port scanning
-    ports_list = []
+    ports_list = []  # Initialize an empty list for ports
+    # Add custom ports to the list
+    for port in custom_ports:
+        ports_list.append(int(port))
+    # Parse the input port range
+    if ports_input:
+        ports_input = ports_input.strip()
+        if ports_input.startswith('[') and ports_input.endswith(']'):
+            ports_input = ports_input[1:-1]
     for part in ports_input.split(','):
         if '-' in part:
             start, end = part.split('-')

@@ -6,11 +6,7 @@ from queue import Queue
 import dns.resolver
 import dns.exception
 import dns.query
-import dns.message
 import dns.rdatatype
-import dns.name
-import dns.rcode
-import dns.update
 import tqdm
 import argparse
 from termcolor import cprint, colored  # Add termcolor import
