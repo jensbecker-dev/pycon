@@ -118,7 +118,9 @@ def main():
         # Print the combined directory results if any were found from any directory scan
         if all_found_directories:
             cprint("\n[*] Found Directories (Combined Results from all directory scans):", 'green', attrs=['bold'])
-            for directory in sorted(list(all_found_directories)): # Sort for consistent output
+            # Use a set to track already displayed directories to prevent duplicates
+            unique_directories = sorted(list(all_found_directories))  # Sort for consistent output
+            for directory in unique_directories:
                 cprint(f"[+] {directory}", 'green')
         else:
             # This message is shown if no directories were added to all_found_directories.

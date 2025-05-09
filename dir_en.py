@@ -9,10 +9,12 @@ from termcolor import cprint, colored  # Add termcolor import
 def import_wordlist(file_path: str) -> List[str]:
     """
     Import a wordlist from a file.
+    Filter out comment lines (starting with #) and empty lines.
     """
     try:
         with open(file_path, 'r') as file:
-            wordlist = [line.strip() for line in file if line.strip()]
+            # Filter out comment lines (starting with #) and empty lines
+            wordlist = [line.strip() for line in file if line.strip() and not line.strip().startswith('#')]
         return wordlist
     except FileNotFoundError:
         cprint(f"[-] File not found: {file_path}", 'red')  # Colored output
