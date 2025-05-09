@@ -16,7 +16,7 @@ pip install -r requirements.txt
 
 To use PyCon, you can run the `pycon.py` script from your terminal.
 
-![PYCON](screenshots/Output.png)
+![RESULTS](screenshots/results.png)
 
 **Basic Usage:**
 
