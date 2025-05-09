@@ -33,11 +33,11 @@ def banner():
     
     # Add timestamp and version info with rich
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    console.print(Panel(f"[cyan]Python-based recon toolset v1.1.0[/cyan]\n[yellow]Started at: {now}[/yellow]", 
+    console.print(Panel(f"[cyan]Python-based recon and exploitation tool v1.1.0[/cyan]\n[yellow]Started at: {now}[/yellow]\n", 
                        border_style="blue", expand=False))
 
 async def run_port_scan(target_domain, ports_list, num_threads_ports):
-    console.print("[yellow]Starting port scan...[/yellow]")
+    console.print("\n[yellow]Starting port scan...[/yellow]")
     
     # Use a thread pool for the blocking port scan operation
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -89,7 +89,7 @@ async def run_subdomain_scan(target_domain):
     return found_subdomains
 
 async def run_directory_scan(target_domain, wordlist_path, num_threads_dir):
-    console.print(f"\n[yellow]Starting directory scan with wordlist: {wordlist_path}[/yellow]")
+    console.print(f"\n[yellow]Starting directory scan with wordlist: {wordlist_path}[/yellow]\n")
     
     dir_wordlist_items = import_wordlist(wordlist_path)
     if not dir_wordlist_items:
@@ -204,15 +204,14 @@ async def main_async(args):
     tasks = []  # Store tasks for proper cleanup
     try:
         target_domain = args.target.strip()
-        wordlist_path_dir_primary = args.wordlist_dir.strip()
-        wordlist_path_dir_secondary = "wordlists/directories_med.txt"
+        wordlist_path_dir = args.wordlist_dir.strip()
         num_threads_dir = args.threads
 
         if not target_domain:
             console.print("[red bold]Target domain is required. Exiting.[/red bold]")
             return
 
-        console.print(f"\n[yellow bold]Target: {target_domain}[/yellow bold]")
+        console.print(f"\n[yellow bold]Target: {target_domain}[/yellow bold\n]")
         
         # Default port range and custom ports
         ports_input = "1-1024"  # Default port range
@@ -245,8 +244,6 @@ async def main_async(args):
         
         ports_list = sorted(list(set(ports_list)))
 
-        console.print(f"\n[+] Custom and range ports to scan: {ports_list}\n")
-
         # Create tasks
         port_scan_task = asyncio.create_task(
             run_port_scan(target_domain, ports_list, num_threads_ports)
@@ -254,18 +251,15 @@ async def main_async(args):
         subdomain_scan_task = asyncio.create_task(
             run_subdomain_scan(target_domain)
         )
-        dir_scan_task1 = asyncio.create_task(
-            run_directory_scan(target_domain, wordlist_path_dir_primary, num_threads_dir)
-        )
-        dir_scan_task2 = asyncio.create_task(
-            run_directory_scan(target_domain, wordlist_path_dir_secondary, num_threads_dir)
+        dir_scan_task = asyncio.create_task(
+            run_directory_scan(target_domain, wordlist_path_dir, num_threads_dir)
         )
         
         # Store tasks for cleanup
-        tasks = [port_scan_task, subdomain_scan_task, dir_scan_task1, dir_scan_task2]
+        tasks = [port_scan_task, subdomain_scan_task, dir_scan_task]
         
         results = []
-        with console.status("[bold green]Running scans...") as status:
+        with console.status("[bold green]") as status:
             # Wait for all tasks with proper cancellation handling
             try:
                 # Use return_exceptions=True to handle task-specific exceptions
@@ -293,17 +287,12 @@ async def main_async(args):
         if isinstance(results[1], Exception):
             console.print(f"[red]Subdomain scan failed: {results[1]}[/red]")
         
-        dir_results_1 = results[2] if not isinstance(results[2], Exception) else {}
+        dir_results = results[2] if not isinstance(results[2], Exception) else {}
         if isinstance(results[2], Exception):
-            console.print(f"[red]Directory scan (primary wordlist) failed: {results[2]}[/red]")
-            
-        dir_results_2 = results[3] if not isinstance(results[3], Exception) else {}
-        if isinstance(results[3], Exception):
-            console.print(f"[red]Directory scan (secondary wordlist) failed: {results[3]}[/red]")
+            console.print(f"[red]Directory scan failed: {results[2]}[/red]")
         
         all_found_directories = {}
-        if isinstance(dir_results_1, dict): all_found_directories.update(dir_results_1)
-        if isinstance(dir_results_2, dict): all_found_directories.update(dir_results_2)
+        if isinstance(dir_results, dict): all_found_directories.update(dir_results)
         
         display_results(target_domain, ports_found, found_subdomains, all_found_directories)
         all_tasks_completed_gracefully = True
@@ -349,7 +338,7 @@ def main():
     
     parser = argparse.ArgumentParser(description="PyCon - Python Reconnaissance Tool")
     parser.add_argument('--target', type=str, required=True, help="The target domain (e.g., example.com)")
-    parser.add_argument('--wordlist-dir', type=str, default="wordlists/directories.txt", help="Path to the primary wordlist file for directory enumeration (default: wordlists/directories.txt)")
+    parser.add_argument('--wordlist-dir', type=str, default="wordlists/directories_med.txt", help="Path to the wordlist file for directory enumeration (default: wordlists/directories_med.txt)")
     parser.add_argument('--threads', type=int, default=10, help="Number of threads for directory enumeration (default: 10)")
     parser.add_argument('--format', type=str, choices=['text', 'json', 'xml'], default='text', help="Output format (default: text)")
     
