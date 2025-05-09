@@ -119,7 +119,15 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"results_{target_domain}_{timestamp}.txt"
     
-    with open(filename, 'w') as f:
+    # Ensure results directory exists
+    results_dir = "results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+    
+    # Save file in results directory
+    filepath = os.path.join(results_dir, filename)
+    
+    with open(filepath, 'w') as f:
         f.write(f"PYCON Scan Results for {target_domain}\n")
         f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
@@ -144,7 +152,7 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
         else:
             f.write("None found\n")
     
-    console.print(f"[cyan]Results saved to [bold]{filename}[/bold][/cyan]")
+    console.print(f"[cyan]Results saved to [bold]{filepath}[/bold][/cyan]")
 
 async def main_async(args):
     try:
@@ -221,6 +229,9 @@ async def main_async(args):
         sys.exit(1)
 
 def main():
+
+    
+
     banner()
     
     parser = argparse.ArgumentParser(description="PyCon - Python Reconnaissance Tool")
