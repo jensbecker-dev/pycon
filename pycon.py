@@ -67,6 +67,9 @@ def main():
     ports_list = list(set(ports_list))  # Remove duplicates
     ports_list.sort()  # Sort for consistent output
 
+    # Display a total count of ports to be scanned
+    cprint(f"[*] Scanning {len(ports_list)} ports in total", 'yellow')
+    
     ports_found = ports.threaded_port_scan(target_domain, ports_list, num_threads_ports)
 
     if ports_found:
@@ -79,9 +82,10 @@ def main():
     try:
         cprint(f"\n[*] Starting enumeration for target: {target_domain}", 'yellow', attrs=['bold'])
 
-        # Subdomain enumeration
+        # Subdomain enumeration - let subd.py handle its own progress bar
         cprint(f"\n[*] Performing subdomain enumeration for {target_domain}...", 'yellow')
         found_subdomains = subd.get_subdomains_w_pub_dns(target_domain)
+        
         # Print subdomain results immediately
         if found_subdomains:
             cprint("\n[*] Found Subdomains:", 'green', attrs=['bold'])

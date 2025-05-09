@@ -2,6 +2,4 @@ requests
 tqdm
 pyfiglet
 termcolor
-urllib3==1.26.18
-chardet==4.0.0
-dnspython
+dnspython==2.2.1

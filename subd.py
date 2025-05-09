@@ -2,7 +2,7 @@
 import requests
 import json
 import threading
-from queue import Queue
+from queue import Queue, Empty  # Added Empty import for exception handling
 import dns.resolver
 import dns.exception
 import dns.query
@@ -11,6 +11,7 @@ import tqdm
 import argparse
 from termcolor import cprint, colored  # Add termcolor import
 import sys
+import time  # Added for potential sleeps if needed
 
 def import_wordlist(file_path):
     """
@@ -41,10 +42,12 @@ def get_subdomains_w_pub_dns(domain):
     results_queue = Queue()
     threads = []
     pbar = None  # Initialize pbar to None
+    stop_event = threading.Event()  # Add event to signal threads to stop
 
     common_subs = import_wordlist('wordlists/subdomains.txt')
     if not common_subs:
         cprint("[-] No common subdomains found in the wordlist. Subdomain scan might be ineffective.", 'yellow')
+        return []  # Return early if no subdomains to check
 
     try:
         # Check the domain itself
@@ -54,73 +57,110 @@ def get_subdomains_w_pub_dns(domain):
             except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout):
                 continue  # Ignore if no record of this type or domain doesn't exist
 
-        if common_subs:
-            # Corrected pbar initialization for manual updates
-            pbar = tqdm.tqdm(total=len(common_subs), desc=colored("[*] Processing subdomains", 'cyan'), unit="subdomain", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")
+        # Initialize progress bar with proper error handling
+        try:
+            pbar = tqdm.tqdm(total=len(common_subs), desc=colored("[*] Processing subdomains", 'cyan'), 
+                          unit="subdomain", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")
+        except Exception as e:
+            cprint(f"[-] Warning: Could not initialize progress bar: {e}", 'yellow')
+            pbar = None
 
-            def check_subdomain(sub, domain_to_check, queue_instance):
-                thread_resolver = dns.resolver.Resolver(configure=False)
-                thread_resolver.nameservers = ['8.8.8.8', '8.8.4.4']
-                subdomain_to_check_fqdn = f"{sub}.{domain_to_check}"
-                try:
-                    thread_resolver.resolve(subdomain_to_check_fqdn, 'A')
-                    queue_instance.put(subdomain_to_check_fqdn)
-                except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout):
-                    pass
-                except Exception: # Catch all other exceptions within the thread
-                    pass # Suppress errors within the thread
-                finally:
-                    if pbar:  # Check if pbar exists before updating
-                        try:
-                            pbar.update(1) # Manual update
-                        except Exception:
-                            pass # Ignore errors during pbar update on shutdown
-            
-            for sub_item in common_subs:  # Iterate over the actual list
-                thread = threading.Thread(target=check_subdomain, args=(sub_item, domain, results_queue))
-                thread.daemon = True # Set thread as daemon
-                threads.append(thread)
-                thread.start()
+        def check_subdomain(sub, domain_to_check, queue_instance):
+            if stop_event.is_set():
+                return
 
-            for thread in threads:
-                while thread.is_alive(): # Loop to ensure join, respects timeout
-                    thread.join(timeout=0.1) 
+            thread_resolver = dns.resolver.Resolver(configure=False)
+            thread_resolver.nameservers = ['8.8.8.8', '8.8.4.4']
+            subdomain_to_check_fqdn = f"{sub}.{domain_to_check}"
+            try:
+                thread_resolver.resolve(subdomain_to_check_fqdn, 'A')
+                queue_instance.put(subdomain_to_check_fqdn)
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout):
+                pass
+            except Exception:  # Catch all other exceptions within the thread
+                pass  # Suppress errors within the thread
+            finally:
+                if pbar and not stop_event.is_set():  # Check if pbar exists and not stopping
+                    try:
+                        pbar.update(1)  # Manual update
+                    except Exception:
+                        pass  # Ignore errors during pbar update on shutdown
         
+        for sub_item in common_subs:  # Iterate over the actual list
+            if stop_event.is_set():
+                break
+                
+            thread = threading.Thread(target=check_subdomain, args=(sub_item, domain, results_queue))
+            thread.daemon = True  # Set thread as daemon
+            threads.append(thread)
+            thread.start()
+
+        # Wait for threads to complete with timeout and interrupt handling
+        try:
+            for thread in threads:
+                while thread.is_alive() and not stop_event.is_set():  # Loop to ensure join, respects timeout
+                    thread.join(timeout=0.1)
+                if stop_event.is_set():
+                    break
+        except KeyboardInterrupt:
+            stop_event.set()
+            raise
+        
+        # Collect results from queue
         while not results_queue.empty():
-            found_subdomains.add(results_queue.get())
+            try:
+                item = results_queue.get(block=False)
+                found_subdomains.add(item)
+            except Empty:
+                break  # Break if queue is empty during retrieval
 
         # Attempt AXFR
         try:
             ns_answer = resolver.resolve(domain, 'NS')
             for ns_record in ns_answer:
+                if stop_event.is_set():
+                    break
+                    
                 nameserver = str(ns_record.target)
                 try:
                     q = dns.query.xfr(nameserver, domain, relativize=False, timeout=5)
                     for msg in q:
+                        if stop_event.is_set():
+                            break
                         for rrset in msg.answer:
                             for item in rrset.items:
                                 if item.rdtype == dns.rdatatype.A or item.rdtype == dns.rdatatype.CNAME:
                                     name_str = str(rrset.name)
                                     if name_str.endswith(f".{domain}") and name_str != domain:
                                         found_subdomains.add(name_str)
-                except Exception as e: # Catch errors during AXFR for a single nameserver
+                except Exception:  # Catch errors during AXFR for a single nameserver
                     continue
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout):
-            pass # No NS records found or other DNS issue for AXFR setup
+            pass  # No NS records found or other DNS issue for AXFR setup
 
         return list(found_subdomains)
 
     except KeyboardInterrupt:
+        stop_event.set()
         cprint("\n[-] Subdomain enumeration interrupted by user.", 'red', attrs=['bold'])
-        return list(found_subdomains) # Return partial results
+        return list(found_subdomains)  # Return partial results
     except Exception as e:
+        stop_event.set()
         cprint(f"[-] An error occurred during subdomain enumeration: {e}", 'red', attrs=['bold'])
-        return list(found_subdomains) # Return partial results
+        return list(found_subdomains)  # Return partial results
     finally:
+        # Always clean up progress bar
         if pbar:
-            pbar.close()
-        # Daemonic threads will be cleaned up automatically when the main thread exits.
-        # The join loop above attempts to wait for them briefly.
+            try:
+                pbar.close()
+            except Exception:
+                pass  # Suppress any errors during close
+        
+        # Signal all threads to stop
+        stop_event.set()
+        
+        # Brief wait to allow threads to notice stop_event
+        time.sleep(0.1)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Subdomain enumeration tool.")
