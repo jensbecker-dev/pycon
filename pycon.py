@@ -30,7 +30,7 @@ def banner():
     
     # Add timestamp and version info with rich
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    console.print(Panel(f"[cyan]Reconnaissance Tool v1.1.0[/cyan]\n[yellow]Started at: {now}[/yellow]", 
+    console.print(Panel(f"[cyan]Python-based recon toolset v1.1.0[/cyan]\n[yellow]Started at: {now}[/yellow]", 
                        border_style="blue", expand=False))
 
 async def run_port_scan(target_domain, ports_list, num_threads_ports):
@@ -164,6 +164,7 @@ async def main_async(args):
         # Default port range and custom ports
         ports_input = "1-1052" 
         custom_ports = ["3389", "3390", "4000", "4444", "5000", "8000", "8080", "8443", "8888"]
+        print("[+]  Custom ports: ", custom_ports)
         num_threads_ports = 10
         ports_list = []
         
