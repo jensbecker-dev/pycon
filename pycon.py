@@ -20,6 +20,9 @@ import time
 # Initialize rich console
 console = Console()
 
+# Timeout for individual directory scan tasks in seconds (e.g., 2 hours)
+DIR_SCAN_TIMEOUT_SECONDS = 7200
+
 def banner():
     print("\n")
     tool_name = " PYC0N "

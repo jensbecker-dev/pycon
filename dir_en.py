@@ -63,37 +63,31 @@ async def async_directory_check(session: aiohttp.ClientSession, url: str, semaph
     """
     async with semaphore:
         try:
-            # Set shorter timeouts for better performance
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5), 
-                                  allow_redirects=True) as response:
-                # Consider a wider range of status codes as "interesting"
+            # Set slightly longer and more granular timeouts
+            timeout = aiohttp.ClientTimeout(total=15, connect=7, sock_read=10)
+            async with session.get(url, timeout=timeout, allow_redirects=True) as response:
                 content_length = response.headers.get('Content-Length', '0')
                 status_code = response.status
                 
-                # Always consider 2xx responses as valid
                 if 200 <= status_code < 300:
                     status_info = f"[Status: {status_code}, Size: {content_length}]"
                     return (url, status_info)
-                
-                # Also consider certain 3xx, 4xx status codes in specific cases
                 elif status_code in [301, 302, 307, 308]:  # Redirects
                     location = response.headers.get('Location', '')
                     status_info = f"[Status: {status_code}, Redirect: {location}]"
                     return (url, status_info)
                     
-                # Check for "soft 404s" - pages that return 200 but are actually error pages
-                # This is more sophisticated detection of false positives
-                elif status_code == 404 and int(content_length) > 500:
-                    # Some servers return custom 404 pages with substantial content
-                    # We're not interested in these
-                    return None
-                    
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            # Handle connection errors gracefully
+        except asyncio.TimeoutError:
+            pass
+        except aiohttp.ClientConnectorError as e:
+            pass
+        except aiohttp.ClientError as e:
+            if "Session is closed" in str(e):
+                cprint(f"Critical: Session closed while scanning {url}", 'red')
             pass
         except Exception as e:
-            # Log other errors for debugging but continue scanning
-            print(f"Error scanning {url}: {str(e)}")
+            if "Connect call failed" not in str(e) and "Connection refused" not in str(e):
+                 print(f"Unexpected error scanning {url}: {type(e).__name__} - {str(e)}")
             pass
     
     return None
@@ -106,9 +100,8 @@ async def async_directory_enumeration(domain: str, wordlist: List[str],
     """
     found_directories = {}
     semaphore = asyncio.Semaphore(max_concurrent)
-    connector = aiohttp.TCPConnector(limit=max_concurrent, ttl_dns_cache=300)
+    connector = aiohttp.TCPConnector(limit_per_host=max_concurrent, ttl_dns_cache=300, enable_cleanup_closed=True)
     
-    # Use custom headers to appear more like a browser
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -116,7 +109,6 @@ async def async_directory_enumeration(domain: str, wordlist: List[str],
         'Connection': 'keep-alive',
     }
     
-    # Try both http and https for more comprehensive scanning
     protocols = ["http", "https"]
     total_urls = len(protocols) * len(wordlist)
     
@@ -127,33 +119,40 @@ async def async_directory_enumeration(domain: str, wordlist: List[str],
     except ImportError:
         console = None  # Fallback if rich is not available
 
+    tasks = []
     async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
-        tasks = []
-        
-        # Create tasks for both HTTP and HTTPS
-        for protocol in protocols:
-            for sub in wordlist:
-                url = f"{protocol}://{domain}/{sub.strip('/')}"
-                task = asyncio.create_task(async_directory_check(session, url, semaphore))
-                tasks.append(task)
-        
-        # Create a status display using Rich
-        if console:
-            with console.status(f"[cyan]Processing {total_urls} directory paths...", spinner="dots") as status:
+        try:
+            for protocol in protocols:
+                for sub in wordlist:
+                    url = f"{protocol}://{domain}/{sub.strip('/')}"
+                    task = asyncio.create_task(async_directory_check(session, url, semaphore))
+                    tasks.append(task)
+            
+            if console:
+                with console.status(f"[cyan]Processing {total_urls} directory paths for {domain}...", spinner="dots") as status:
+                    for coro in asyncio.as_completed(tasks):
+                        try:
+                            result = await coro
+                            if result:
+                                url, status_info = result
+                                found_directories[url] = status_info
+                        except Exception as e:
+                            console.print(f"[red]Error processing a directory check result: {e}[/red]")
+            else:
                 for coro in asyncio.as_completed(tasks):
-                    result = await coro
-                    if result:
-                        url, status_info = result
-                        found_directories[url] = status_info
-                        console.print(f"[green][+] Found: {url} {status_info}[/green]")
-        else:
-            # Fallback to simpler output if Rich is not available
-            for coro in asyncio.as_completed(tasks):
-                result = await coro
-                if result:
-                    url, status_info = result
-                    found_directories[url] = status_info
-                    cprint(f"[+] Found: {url} {status_info}", 'green')
+                    try:
+                        result = await coro
+                        if result:
+                            url, status_info = result
+                            found_directories[url] = status_info
+                    except Exception as e:
+                        cprint(f"Error processing a directory check result: {e}", 'red')
+        finally:
+            if tasks:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True) 
     
     return found_directories
 
