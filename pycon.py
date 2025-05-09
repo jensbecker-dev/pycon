@@ -87,32 +87,38 @@ async def run_directory_scan(target_domain, wordlist_path, num_threads_dir):
 
 def display_results(target_domain, ports_found, found_subdomains, all_found_directories):
     # Create a nice table for the results
-    table = Table(title=f"Scan Results for {target_domain}")
+    table = Table(title=f"[bold cyan]Scan Results for {target_domain}[/bold cyan]", show_header=True, header_style="bold magenta")
     
-    # Add port scan results
+    # Add columns with better styling
     table.add_column("Category", style="cyan", no_wrap=True)
     table.add_column("Results", style="green")
     
+    # Add port scan results with more details
     if ports_found:
-        ports_str = ", ".join([str(port) for port in sorted(list(ports_found.keys()))])
+        port_details = []
+        for port in sorted(list(ports_found.keys())):
+            service = ports_found[port] if isinstance(ports_found[port], str) else "Unknown"
+            port_details.append(f"[bold]{port}[/bold]: {service}")
+        ports_str = "\n".join(port_details)
         table.add_row("Open Ports", ports_str)
     else:
         table.add_row("Open Ports", "[red]None found[/red]")
     
     # Add subdomain results
     if found_subdomains:
-        subdomains_str = "\n".join(sorted(found_subdomains))
+        subdomains_str = "\n".join([f"[bold]{subdomain}[/bold]" for subdomain in sorted(found_subdomains)])
         table.add_row("Subdomains", subdomains_str)
     else:
         table.add_row("Subdomains", "[red]None found[/red]")
     
-    # Add directory results
+    # Add directory results with more details
     if all_found_directories:
-        dirs_str = "\n".join(sorted(list(all_found_directories)))
+        dirs_str = "\n".join([f"[bold]{directory}[/bold]" for directory in sorted(list(all_found_directories))])
         table.add_row("Directories", dirs_str)
     else:
         table.add_row("Directories", "[red]None found[/red]")
     
+    console.print("\n")
     console.print(table)
     
     # Save results to file
@@ -124,7 +130,7 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
     
-    # Save file in results directory
+    # Save file in results directory with more detailed information
     filepath = os.path.join(results_dir, filename)
     
     with open(filepath, 'w') as f:
@@ -134,7 +140,8 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
         f.write("=== OPEN PORTS ===\n")
         if ports_found:
             for port in sorted(list(ports_found.keys())):
-                f.write(f"Port {port}\n")
+                service = ports_found[port] if isinstance(ports_found[port], str) else ""
+                f.write(f"Port {port} {service}\n")
         else:
             f.write("None found\n")
         
@@ -152,7 +159,7 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
         else:
             f.write("None found\n")
     
-    console.print(f"[cyan]Results saved to [bold]{filepath}[/bold][/cyan]")
+    console.print(f"\n[cyan]Results saved to [bold]{filepath}[/bold][/cyan]")
 
 async def main_async(args):
     try:
@@ -230,7 +237,7 @@ async def main_async(args):
 
 def main():
 
-    
+    os.system('cls' if os.name == 'nt' else 'clear')
 
     banner()
     
