@@ -58,24 +58,44 @@ def get_directory_enumeration(domain: str, wordlist: List[str]) -> List[str]:
 async def async_directory_check(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore) -> Optional[tuple]:
     """
     Asynchronously check if a directory exists using aiohttp.
-    Returns a tuple of (url, status_code, content_length) if the directory is found.
+    Returns a tuple of (url, status_info) if the directory is found.
     Uses semaphore to limit concurrent connections.
     """
     async with semaphore:
         try:
             # Set shorter timeouts for better performance
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=3), 
-                                  allow_redirects=False) as response:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5), 
+                                  allow_redirects=True) as response:
                 # Consider a wider range of status codes as "interesting"
-                if response.status in [200, 201, 202, 203, 204, 301, 302, 303, 307, 308]:
-                    content_length = response.headers.get('Content-Length', '0')
-                    status_info = f"[Status: {response.status}, Size: {content_length}]"
+                content_length = response.headers.get('Content-Length', '0')
+                status_code = response.status
+                
+                # Always consider 2xx responses as valid
+                if 200 <= status_code < 300:
+                    status_info = f"[Status: {status_code}, Size: {content_length}]"
                     return (url, status_info)
+                
+                # Also consider certain 3xx, 4xx status codes in specific cases
+                elif status_code in [301, 302, 307, 308]:  # Redirects
+                    location = response.headers.get('Location', '')
+                    status_info = f"[Status: {status_code}, Redirect: {location}]"
+                    return (url, status_info)
+                    
+                # Check for "soft 404s" - pages that return 200 but are actually error pages
+                # This is more sophisticated detection of false positives
+                elif status_code == 404 and int(content_length) > 500:
+                    # Some servers return custom 404 pages with substantial content
+                    # We're not interested in these
+                    return None
+                    
         except (aiohttp.ClientError, asyncio.TimeoutError):
+            # Handle connection errors gracefully
             pass
-        except Exception:
-            # Suppress other errors to avoid crashing the program
+        except Exception as e:
+            # Log other errors for debugging but continue scanning
+            print(f"Error scanning {url}: {str(e)}")
             pass
+    
     return None
 
 async def async_directory_enumeration(domain: str, wordlist: List[str], 

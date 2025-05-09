@@ -53,14 +53,37 @@ async def run_port_scan(target_domain, ports_list, num_threads_ports):
 async def run_subdomain_scan(target_domain):
     console.print("[yellow]Starting subdomain enumeration...[/yellow]")
     
+    # First check if the wordlist exists
+    wordlist_path = "wordlists/subdomains.txt"
+    if not os.path.exists(wordlist_path):
+        console.print(f"[red]Subdomain wordlist not found at {wordlist_path}. Skipping subdomain enumeration.[/red]")
+        return []
+
+    # Check if the wordlist is populated
+    try:
+        with open(wordlist_path, 'r') as f:
+            if len(f.readlines()) < 5:  # Arbitrary small number to check if file is too small
+                console.print(f"[yellow]Warning: Subdomain wordlist at {wordlist_path} seems very small. Results may be limited.[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error reading subdomain wordlist: {str(e)}[/red]")
+        return []
+    
     # Use a thread pool for the blocking DNS operations
-    with console.status("[bold green]Scanning subdomains...") as status:
+    with console.status(f"[bold green]Scanning subdomains for {target_domain}...[/bold green]", spinner="dots") as status:
         with ThreadPoolExecutor(max_workers=1) as executor:
             found_subdomains = await asyncio.get_event_loop().run_in_executor(
                 executor,
                 subd.get_subdomains_w_pub_dns,
                 target_domain
             )
+    
+    # Print the results for better visibility during scanning
+    if found_subdomains:
+        console.print(f"[green]Found {len(found_subdomains)} subdomains for {target_domain}:[/green]")
+        for subdomain in sorted(found_subdomains):
+            console.print(f"[green]  - {subdomain}[/green]")
+    else:
+        console.print(f"[yellow]No subdomains found for {target_domain}[/yellow]")
     
     return found_subdomains
 
