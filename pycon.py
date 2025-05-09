@@ -37,16 +37,15 @@ async def run_port_scan(target_domain, ports_list, num_threads_ports):
     console.print("[yellow]Starting port scan...[/yellow]")
     
     # Use a thread pool for the blocking port scan operation
-    with console.status("[bold green]Scanning ports...") as status:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            # Run the port scan in the executor to prevent blocking the event loop
-            ports_found = await asyncio.get_event_loop().run_in_executor(
-                executor, 
-                ports.threaded_port_scan, 
-                target_domain, 
-                ports_list, 
-                num_threads_ports
-            )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        # Run the port scan in the executor to prevent blocking the event loop
+        ports_found = await asyncio.get_event_loop().run_in_executor(
+            executor, 
+            ports.threaded_port_scan, 
+            target_domain, 
+            ports_list, 
+            num_threads_ports
+        )
     
     return ports_found
 
@@ -69,13 +68,12 @@ async def run_subdomain_scan(target_domain):
         return []
     
     # Use a thread pool for the blocking DNS operations
-    with console.status(f"[bold green]Scanning subdomains for {target_domain}...[/bold green]", spinner="dots") as status:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            found_subdomains = await asyncio.get_event_loop().run_in_executor(
-                executor,
-                subd.get_subdomains_w_pub_dns,
-                target_domain
-            )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        found_subdomains = await asyncio.get_event_loop().run_in_executor(
+            executor,
+            subd.get_subdomains_w_pub_dns,
+            target_domain
+        )
     
     # Print the results for better visibility during scanning
     if found_subdomains:
@@ -96,14 +94,13 @@ async def run_directory_scan(target_domain, wordlist_path, num_threads_dir):
         return {}
     
     # Use async directory enumeration for better performance and status information
-    with console.status(f"[bold green]Scanning directories with {os.path.basename(wordlist_path)}...") as status:
-        try:
-            # Run the enhanced async directory scan with status information
-            found_directories = await dir_en.async_directory_enumeration(target_domain, dir_wordlist_items, max_concurrent=num_threads_dir)
-            return found_directories
-        except Exception as e:
-            console.print(f"[red]Error during directory scan: {str(e)}[/red]")
-            return {}
+    try:
+        # Run the enhanced async directory scan with status information
+        found_directories = await dir_en.async_directory_enumeration(target_domain, dir_wordlist_items, max_concurrent=num_threads_dir)
+        return found_directories
+    except Exception as e:
+        console.print(f"[red]Error during directory scan: {str(e)}[/red]")
+        return {}
 
 def display_results(target_domain, ports_found, found_subdomains, all_found_directories):
     # Create a nice table for the results
@@ -247,8 +244,9 @@ async def main_async(args):
             run_directory_scan(target_domain, wordlist_path_dir_secondary, num_threads_dir),
         ]
         
-        # Wait for all tasks to complete
-        results = await asyncio.gather(*tasks, return_exceptions=False)
+        # Wait for all tasks to complete under a single status display
+        with console.status("[bold green]Running scans...") as status:
+            results = await asyncio.gather(*tasks, return_exceptions=False)
         
         # Process results
         ports_found = results[0] if not isinstance(results[0], Exception) else {}
