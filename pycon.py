@@ -197,49 +197,52 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
     console.print(f"\n[cyan]Results saved to [bold]{filepath}[/bold][/cyan]")
 
 async def main_async(args):
+    all_tasks_completed_gracefully = False
     try:
         target_domain = args.target.strip()
         wordlist_path_dir_primary = args.wordlist_dir.strip()
         wordlist_path_dir_secondary = "wordlists/directories_med.txt"
         num_threads_dir = args.threads
-        output_format = args.format
-        
+
         if not target_domain:
             console.print("[red bold]Target domain is required. Exiting.[/red bold]")
-            sys.exit(1)
-        
-        # Port scanning setup
+            return
+
         console.print(f"\n[yellow bold]Target: {target_domain}[/yellow bold]")
         
         # Default port range and custom ports
         ports_input = "1-1024"  # Default port range
         custom_ports = ["3389", "3390", "4000", "4444", "5000", "8000", "8080", "8443", "8888"]
-        print("\n[+]  Custom ports: ", custom_ports, "\n")
-        # Number of threads for port scanning
-        num_threads_ports = 10
+        
+        num_threads_ports = 10 # Number of threads for port scanning
         ports_list = []
         
-        # Add custom ports to the list
-        for port in custom_ports:
-            ports_list.append(int(port))
-        
-        # Parse the input port range
+        for port_str in custom_ports: # Ensure ports are integers
+            try:
+                ports_list.append(int(port_str))
+            except ValueError:
+                console.print(f"[yellow]Warning: Invalid custom port '{port_str}' ignored.[/yellow]")
+
         if ports_input:
             ports_input = ports_input.strip()
-            if ports_input.startswith('[') and ports_input.endswith(']'):
-                ports_input = ports_input[1:-1]
+            for part in ports_input.split(','):
+                part = part.strip()
+                if '-' in part:
+                    try:
+                        start, end = map(int, part.split('-'))
+                        ports_list.extend(range(start, end + 1))
+                    except ValueError:
+                        console.print(f"[yellow]Warning: Invalid port range '{part}' ignored.[/yellow]")
+                else:
+                    try:
+                        ports_list.append(int(part))
+                    except ValueError:
+                        console.print(f"[yellow]Warning: Invalid port number '{part}' ignored.[/yellow]")
         
-        for part in ports_input.split(','):
-            if '-' in part:
-                start, end = part.split('-')
-                ports_list.extend(range(int(start), int(end) + 1))
-            else:
-                ports_list.append(int(part))
-        
-        ports_list = list(set(ports_list))  # Remove duplicates
-        ports_list.sort()  # Sort for consistent output
-        
-        # Run port scan, subdomain scan, and directory scans concurrently
+        ports_list = sorted(list(set(ports_list)))
+
+        console.print(f"\n[+] Custom and range ports to scan: {ports_list}\n")
+
         tasks = [
             run_port_scan(target_domain, ports_list, num_threads_ports),
             run_subdomain_scan(target_domain),
@@ -247,32 +250,46 @@ async def main_async(args):
             run_directory_scan(target_domain, wordlist_path_dir_secondary, num_threads_dir),
         ]
         
-        # Wait for all tasks to complete under a single status display
+        results = []
         with console.status("[bold green]Running scans...") as status:
-            results = await asyncio.gather(*tasks, return_exceptions=False)
+            # Use return_exceptions=True to allow all tasks to run and collect all results/exceptions
+            results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Process results
+        # Process results, checking for exceptions
         ports_found = results[0] if not isinstance(results[0], Exception) else {}
+        if isinstance(results[0], Exception):
+            console.print(f"[red]Port scan failed: {results[0]}[/red]")
+
         found_subdomains = results[1] if not isinstance(results[1], Exception) else []
+        if isinstance(results[1], Exception):
+            console.print(f"[red]Subdomain scan failed: {results[1]}[/red]")
         
-        # Process directory scan results
         dir_results_1 = results[2] if not isinstance(results[2], Exception) else {}
+        if isinstance(results[2], Exception):
+            console.print(f"[red]Directory scan (primary wordlist) failed: {results[2]}[/red]")
+            
         dir_results_2 = results[3] if not isinstance(results[3], Exception) else {}
+        if isinstance(results[3], Exception):
+            console.print(f"[red]Directory scan (secondary wordlist) failed: {results[3]}[/red]")
         
-        # Combine directory results - handle dictionaries properly
         all_found_directories = {}
-        all_found_directories.update(dir_results_1)
-        all_found_directories.update(dir_results_2)
+        if isinstance(dir_results_1, dict): all_found_directories.update(dir_results_1)
+        if isinstance(dir_results_2, dict): all_found_directories.update(dir_results_2)
         
-        # Display the results
         display_results(target_domain, ports_found, found_subdomains, all_found_directories)
+        all_tasks_completed_gracefully = True
         
-    except KeyboardInterrupt:
-        console.print("\n[red bold]User interrupted the process. Exiting gracefully.[/red bold]")
-        sys.exit(0)
+    except asyncio.CancelledError:
+        console.print("\n[yellow bold]Scan process cancelled by user. Finalizing...[/yellow bold]")
+    except KeyboardInterrupt: 
+        console.print("\n[red bold]KeyboardInterrupt directly caught in main_async. Exiting.[/red bold]")
     except Exception as e:
-        console.print(f"\n[red bold]An unexpected error occurred: {e}[/red bold]")
-        sys.exit(1)
+        console.print(f"\n[red bold]An unexpected error occurred in main_async: {type(e).__name__} - {e}[/red bold]")
+    finally:
+        if not all_tasks_completed_gracefully:
+            console.print("\n[blue bold]Scan process did not complete all tasks gracefully or was interrupted.[/blue bold]")
+        else:
+            console.print("\n[blue bold]Scan process completed.[/blue bold]")
 
 def main():
 
@@ -290,10 +307,19 @@ def main():
     
     # Run the async main function
     if sys.platform.startswith('win'):
-        # Windows specific event loop policy
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     
-    asyncio.run(main_async(args))
+    try:
+        asyncio.run(main_async(args))
+    except KeyboardInterrupt:
+        # Allow asyncio.run() to handle KeyboardInterrupt and cleanup.
+        # It will typically cancel the main_async task.
+        # If asyncio.run() re-raises KeyboardInterrupt, it will be caught here
+        # and the program will exit.
+        console.print("\n[red bold]Program termination requested by user. Allowing asyncio to clean up...[/red bold]")
+    except Exception as e:
+        console.print(f"\n[red bold]Critical unhandled exception at top level: {type(e).__name__} - {e}[/red bold]")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

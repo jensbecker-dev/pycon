@@ -79,6 +79,7 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
     Get subdomains for a given domain using a public DNS server.
     Optimized with worker pool and better error handling.
     """
+    pbar = None  # Initialize pbar here
     # Import rich console for better terminal output
     try:
         from rich.console import Console
@@ -216,13 +217,6 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
                         thread.join(timeout=0.1)
                     if stop_event.is_set():
                         break
-            
-            # Close the progress bar
-            if pbar:
-                try:
-                    pbar.close()
-                except Exception:
-                    pass
         
         # Collect results from queue
         while not results_queue.empty():
@@ -281,6 +275,12 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
         # Signal all threads to stop
         stop_event.set()
         
+        if pbar:  # If pbar was initialized
+            try:
+                pbar.close()
+            except Exception:
+                pass  # Ignore errors during pbar close
+
         # Brief wait to allow threads to notice stop_event
         time.sleep(0.1)
 
@@ -308,7 +308,7 @@ if __name__ == '__main__':
             cprint("\n[-] No subdomains found.", 'red')
     except KeyboardInterrupt:
         cprint("\n[-] User interrupted the subdomain enumeration process. Exiting gracefully.", 'red', attrs=['bold'])
-        sys.exit(0)
+        # sys.exit(0) # Removed to allow threads to attempt to finish cleanup
     except Exception as e:
         cprint(f"\n[-] An unexpected error occurred during subdomain enumeration: {e}", 'red', attrs=['bold'])
         sys.exit(1)

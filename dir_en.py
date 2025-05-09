@@ -61,34 +61,46 @@ async def async_directory_check(session: aiohttp.ClientSession, url: str, semaph
     Returns a tuple of (url, status_info) if the directory is found.
     Uses semaphore to limit concurrent connections.
     """
-    async with semaphore:
-        try:
-            # Set slightly longer and more granular timeouts
-            timeout = aiohttp.ClientTimeout(total=15, connect=7, sock_read=10)
-            async with session.get(url, timeout=timeout, allow_redirects=True) as response:
-                content_length = response.headers.get('Content-Length', '0')
-                status_code = response.status
-                
-                if 200 <= status_code < 300:
-                    status_info = f"[Status: {status_code}, Size: {content_length}]"
-                    return (url, status_info)
-                elif status_code in [301, 302, 307, 308]:  # Redirects
-                    location = response.headers.get('Location', '')
-                    status_info = f"[Status: {status_code}, Redirect: {location}]"
-                    return (url, status_info)
+    try:
+        async with semaphore:  # If cancelled while waiting for semaphore
+            try:
+                # Set slightly longer and more granular timeouts
+                timeout = aiohttp.ClientTimeout(total=15, connect=7, sock_read=10)
+                async with session.get(url, timeout=timeout, allow_redirects=True) as response:  # If cancelled during HTTP GET
+                    content_length = response.headers.get('Content-Length', '0')
+                    status_code = response.status
                     
-        except asyncio.TimeoutError:
-            pass
-        except aiohttp.ClientConnectorError as e:
-            pass
-        except aiohttp.ClientError as e:
-            if "Session is closed" in str(e):
-                cprint(f"Critical: Session closed while scanning {url}", 'red')
-            pass
-        except Exception as e:
-            if "Connect call failed" not in str(e) and "Connection refused" not in str(e):
-                 print(f"Unexpected error scanning {url}: {type(e).__name__} - {str(e)}")
-            pass
+                    if 200 <= status_code < 300:
+                        status_info = f"[Status: {status_code}, Size: {content_length}]"
+                        return (url, status_info)
+                    elif status_code in [301, 302, 307, 308]:  # Redirects
+                        location = response.headers.get('Location', '')
+                        status_info = f"[Status: {status_code}, Redirect: {location}]"
+                        return (url, status_info)
+                        
+            except asyncio.TimeoutError:
+                # Explicitly handle timeout without traceback
+                pass
+            except aiohttp.ClientConnectorError:
+                # Network connection errors
+                pass
+            except aiohttp.ClientError as e:
+                if "Session is closed" in str(e):
+                    # Session already closed (happens during shutdown)
+                    pass
+                pass
+            except asyncio.CancelledError:
+                # Re-raise CancelledError to allow proper task cancellation
+                raise
+            except Exception as e:
+                # For any other exceptions, only log if they're not common network errors
+                if "Connect call failed" not in str(e) and "Connection refused" not in str(e):
+                    pass
+                pass
+    
+    except asyncio.CancelledError:
+        # Important: re-raise CancelledError to propagate cancellation properly
+        raise
     
     return None
 
@@ -100,7 +112,11 @@ async def async_directory_enumeration(domain: str, wordlist: List[str],
     """
     found_directories = {}
     semaphore = asyncio.Semaphore(max_concurrent)
-    connector = aiohttp.TCPConnector(limit_per_host=max_concurrent, ttl_dns_cache=300, enable_cleanup_closed=True)
+    connector = aiohttp.TCPConnector(
+        limit_per_host=max_concurrent, 
+        ttl_dns_cache=300, 
+        enable_cleanup_closed=True
+    )
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -112,47 +128,103 @@ async def async_directory_enumeration(domain: str, wordlist: List[str],
     protocols = ["http", "https"]
     total_urls = len(protocols) * len(wordlist)
     
-    # Import rich console if not already available
     try:
         from rich.console import Console
         console = Console()
     except ImportError:
-        console = None  # Fallback if rich is not available
+        console = None
 
     tasks = []
+    task_cancellation_requested = False
+    
+    # Define a helper function to handle proper task cleanup
+    async def cancel_all_tasks(task_list):
+        """Cancel all tasks and wait for them to complete with proper exception handling"""
+        if not task_list:
+            return
+            
+        # First cancel all tasks
+        for t in task_list:
+            if not t.done():
+                t.cancel()
+                
+        # Then await their cancellation with exception handling
+        await asyncio.gather(*task_list, return_exceptions=True)
+        
+        # Explicitly clear the list to help garbage collection
+        task_list.clear()
+    
     async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
         try:
-            for protocol in protocols:
-                for sub in wordlist:
-                    url = f"{protocol}://{domain}/{sub.strip('/')}"
-                    task = asyncio.create_task(async_directory_check(session, url, semaphore))
-                    tasks.append(task)
+            # Create all tasks but process them in batches to avoid excessive memory usage
+            batch_size = min(5000, len(wordlist))  # Process in reasonable batches
             
-            if console:
-                with console.status(f"[cyan]Processing {total_urls} directory paths for {domain}...", spinner="dots") as status:
+            for batch_start in range(0, len(wordlist), batch_size):
+                batch_end = min(batch_start + batch_size, len(wordlist))
+                batch = wordlist[batch_start:batch_end]
+                
+                # Clear previous batch tasks if any
+                if tasks:
+                    await cancel_all_tasks(tasks)
+                    tasks = []
+                
+                # Create tasks for this batch
+                for protocol in protocols:
+                    for sub in batch:
+                        url = f"{protocol}://{domain}/{sub.strip('/')}"
+                        task = asyncio.create_task(async_directory_check(session, url, semaphore))
+                        tasks.append(task)
+                
+                if console:
+                    with console.status(f"[cyan]Processing {len(tasks)} directory paths (batch {batch_start}-{batch_end}) for {domain}...", spinner="dots") as status:
+                        for coro in asyncio.as_completed(tasks):
+                            try:
+                                result = await coro
+                                if result:
+                                    url, status_info = result
+                                    found_directories[url] = status_info
+                            except asyncio.CancelledError:
+                                # Task was cancelled, just move on
+                                pass
+                            except Exception as e:
+                                if not task_cancellation_requested:
+                                    console.print(f"[red]Error processing a directory check: {e}[/red]")
+                else:
+                    # Without rich console
                     for coro in asyncio.as_completed(tasks):
                         try:
                             result = await coro
                             if result:
                                 url, status_info = result
                                 found_directories[url] = status_info
+                        except asyncio.CancelledError:
+                            # Task was cancelled, just move on
+                            pass
                         except Exception as e:
-                            console.print(f"[red]Error processing a directory check result: {e}[/red]")
+                            if not task_cancellation_requested:
+                                cprint(f"Error processing a directory check: {e}", 'red')
+                
+        except asyncio.CancelledError:
+            # Main task was cancelled (e.g., by Ctrl+C)
+            task_cancellation_requested = True
+            if console:
+                console.print("[yellow]Task cancellation requested. Cleaning up...[/yellow]")
             else:
-                for coro in asyncio.as_completed(tasks):
-                    try:
-                        result = await coro
-                        if result:
-                            url, status_info = result
-                            found_directories[url] = status_info
-                    except Exception as e:
-                        cprint(f"Error processing a directory check result: {e}", 'red')
+                cprint("Task cancellation requested. Cleaning up...", 'yellow')
+            raise  # Re-raise to propagate cancellation
+        except Exception as e:
+            task_cancellation_requested = True
+            if console:
+                console.print(f"[red]Error during directory enumeration: {e}[/red]")
+            else:
+                cprint(f"Error during directory enumeration: {e}", 'red')
+            raise
         finally:
+            # Ensure proper cleanup of all remaining tasks
             if tasks:
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True) 
+                if console:
+                    console.print("[cyan]Cleaning up remaining tasks...[/cyan]")
+                await cancel_all_tasks(tasks)
     
     return found_directories
 
@@ -279,13 +351,14 @@ def main():
         
             if use_async:
                 cprint(f"[*] Starting async directory enumeration for {target_domain} with {wordlist_path}...", 'yellow')
-                found_directories = asyncio.run(async_directory_enumeration(target_domain, wordlist, max_concurrent=num_threads))
+                found_directories_dict = asyncio.run(async_directory_enumeration(target_domain, wordlist, max_concurrent=num_threads))
+                all_found_directories.update(found_directories_dict)  # Ensure update from dict
             else:
                 cprint(f"[*] Starting threaded directory enumeration for {target_domain} with {wordlist_path} using {num_threads} threads...", 'yellow')
-                found_directories = threaded_directory_enumeration(target_domain, wordlist, num_threads)
+                found_dirs_list = threaded_directory_enumeration(target_domain, wordlist, num_threads)
+                for fd_url in found_dirs_list:
+                    all_found_directories[fd_url] = "[Status: (threaded)]"  # Placeholder status
                 
-            all_found_directories.update(found_directories)
-        
         if all_found_directories:
             cprint(f"\n[*] Found directories for {target_domain}:", 'green', attrs=['bold'])
             for directory, status_info in sorted(all_found_directories.items()):
@@ -294,7 +367,7 @@ def main():
             cprint(f"\n[-] No directories found for {target_domain}.", 'red')
     except KeyboardInterrupt:
         cprint("\n[-] User interrupted the directory enumeration process. Exiting gracefully.", 'red', attrs=['bold'])
-        sys.exit(0)
+        # Removed sys.exit(0) to allow asyncio.run() to clean up if it's handling KeyboardInterrupt.
     except Exception as e:
         cprint(f"\n[-] An unexpected error occurred during directory enumeration: {e}", 'red', attrs=['bold'])
         sys.exit(1)
