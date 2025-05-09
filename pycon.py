@@ -51,7 +51,7 @@ async def run_port_scan(target_domain, ports_list, num_threads_ports):
     return ports_found
 
 async def run_subdomain_scan(target_domain):
-    console.print("[yellow]Starting subdomain enumeration...[/yellow]")
+    console.print("\n[yellow]Starting subdomain enumeration...[/yellow]")
     
     # First check if the wordlist exists
     wordlist_path = "wordlists/subdomains.txt"
@@ -79,16 +79,16 @@ async def run_subdomain_scan(target_domain):
     
     # Print the results for better visibility during scanning
     if found_subdomains:
-        console.print(f"[green]Found {len(found_subdomains)} subdomains for {target_domain}:[/green]")
+        console.print(f"\n[green]Found {len(found_subdomains)} subdomains for {target_domain}:[/green]")
         for subdomain in sorted(found_subdomains):
             console.print(f"[green]  - {subdomain}[/green]")
     else:
-        console.print(f"[yellow]No subdomains found for {target_domain}[/yellow]")
+        console.print(f"\n[yellow]No subdomains found for {target_domain}[/yellow]")
     
     return found_subdomains
 
 async def run_directory_scan(target_domain, wordlist_path, num_threads_dir):
-    console.print(f"[yellow]Starting directory scan with wordlist: {wordlist_path}[/yellow]")
+    console.print(f"\n[yellow]Starting directory scan with wordlist: {wordlist_path}[/yellow\n]")
     
     dir_wordlist_items = import_wordlist(wordlist_path)
     if not dir_wordlist_items:
@@ -214,7 +214,8 @@ async def main_async(args):
         # Default port range and custom ports
         ports_input = "1-1052" 
         custom_ports = ["3389", "3390", "4000", "4444", "5000", "8000", "8080", "8443", "8888"]
-        print("[+]  Custom ports: ", custom_ports)
+        print("\n[+]  Custom ports: ", custom_ports, "\n")
+        # Number of threads for port scanning
         num_threads_ports = 10
         ports_list = []
         
@@ -247,7 +248,7 @@ async def main_async(args):
         ]
         
         # Wait for all tasks to complete
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=False)
         
         # Process results
         ports_found = results[0] if not isinstance(results[0], Exception) else {}
