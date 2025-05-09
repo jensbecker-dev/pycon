@@ -55,9 +55,10 @@ def get_directory_enumeration(domain: str, wordlist: List[str]) -> List[str]:
             pass
     return list(found_directories)
 
-async def async_directory_check(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore) -> Optional[str]:
+async def async_directory_check(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore) -> Optional[tuple]:
     """
     Asynchronously check if a directory exists using aiohttp.
+    Returns a tuple of (url, status_code, content_length) if the directory is found.
     Uses semaphore to limit concurrent connections.
     """
     async with semaphore:
@@ -65,8 +66,11 @@ async def async_directory_check(session: aiohttp.ClientSession, url: str, semaph
             # Set shorter timeouts for better performance
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=3), 
                                   allow_redirects=False) as response:
-                if response.status in [200, 302, 303]:
-                    return url
+                # Consider a wider range of status codes as "interesting"
+                if response.status in [200, 201, 202, 203, 204, 301, 302, 303, 307, 308]:
+                    content_length = response.headers.get('Content-Length', '0')
+                    status_info = f"[Status: {response.status}, Size: {content_length}]"
+                    return (url, status_info)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             pass
         except Exception:
@@ -75,39 +79,63 @@ async def async_directory_check(session: aiohttp.ClientSession, url: str, semaph
     return None
 
 async def async_directory_enumeration(domain: str, wordlist: List[str], 
-                                     max_concurrent: int = 40) -> List[str]:
+                                     max_concurrent: int = 40) -> Dict[str, str]:
     """
     Perform directory enumeration asynchronously using aiohttp.
-    Much more efficient than threaded approach for I/O bound operations.
+    Returns a dictionary of {url: status_info} for found directories.
     """
-    found_directories = set()
+    found_directories = {}
     semaphore = asyncio.Semaphore(max_concurrent)
     connector = aiohttp.TCPConnector(limit=max_concurrent, ttl_dns_cache=300)
     
-    async with aiohttp.ClientSession(connector=connector) as session:
+    # Use custom headers to appear more like a browser
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+    }
+    
+    # Try both http and https for more comprehensive scanning
+    protocols = ["http", "https"]
+    total_urls = len(protocols) * len(wordlist)
+    
+    # Import rich console if not already available
+    try:
+        from rich.console import Console
+        console = Console()
+    except ImportError:
+        console = None  # Fallback if rich is not available
+
+    async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
         tasks = []
-        for sub in wordlist:
-            url = f"http://{domain}/{sub}"
-            task = asyncio.create_task(async_directory_check(session, url, semaphore))
-            tasks.append(task)
         
-        # Create a progress bar
-        try:
-            with tqdm.tqdm(total=len(tasks), desc=colored("[*] Processing directories", 'cyan'), 
-                          unit="dir") as pbar:
+        # Create tasks for both HTTP and HTTPS
+        for protocol in protocols:
+            for sub in wordlist:
+                url = f"{protocol}://{domain}/{sub.strip('/')}"
+                task = asyncio.create_task(async_directory_check(session, url, semaphore))
+                tasks.append(task)
+        
+        # Create a status display using Rich
+        if console:
+            with console.status(f"[cyan]Processing {total_urls} directory paths...", spinner="dots") as status:
                 for coro in asyncio.as_completed(tasks):
                     result = await coro
                     if result:
-                        found_directories.add(result)
-                    pbar.update(1)
-        except KeyboardInterrupt:
-            # Cancel all pending tasks on interrupt
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            raise
+                        url, status_info = result
+                        found_directories[url] = status_info
+                        console.print(f"[green][+] Found: {url} {status_info}[/green]")
+        else:
+            # Fallback to simpler output if Rich is not available
+            for coro in asyncio.as_completed(tasks):
+                result = await coro
+                if result:
+                    url, status_info = result
+                    found_directories[url] = status_info
+                    cprint(f"[+] Found: {url} {status_info}", 'green')
     
-    return list(found_directories)
+    return found_directories
 
 def threaded_directory_enumeration(domain: str, wordlist: List[str], num_threads: int = 10) -> List[str]:
     """
@@ -218,7 +246,7 @@ def main():
 
     try:
         wordlist_paths = ["wordlists/directories.txt", "wordlists/directories_med.txt"]
-        all_found_directories = set()
+        all_found_directories = {}
 
         for wordlist_path in wordlist_paths:
             if not os.path.isfile(wordlist_path):
@@ -241,8 +269,8 @@ def main():
         
         if all_found_directories:
             cprint(f"\n[*] Found directories for {target_domain}:", 'green', attrs=['bold'])
-            for directory in sorted(list(all_found_directories)):
-                cprint(f"[+] {directory}", 'green')
+            for directory, status_info in sorted(all_found_directories.items()):
+                cprint(f"[+] {directory} {status_info}", 'green')
         else:
             cprint(f"\n[-] No directories found for {target_domain}.", 'red')
     except KeyboardInterrupt:

@@ -22,7 +22,7 @@ console = Console()
 
 def banner():
     print("\n")
-    tool_name = "   PYC0N   "
+    tool_name = " PYC0N "
     font_name = "slant"
     banner_text = figlet_format(tool_name, font=font_name)
     colored_banner = colored(banner_text, 'cyan', attrs=['bold'])
@@ -70,24 +70,21 @@ async def run_directory_scan(target_domain, wordlist_path, num_threads_dir):
     dir_wordlist_items = import_wordlist(wordlist_path)
     if not dir_wordlist_items:
         console.print(f"[red]Wordlist '{wordlist_path}' is empty or could not be loaded. Skipping this scan.[/red]")
-        return set()
-        
-    # Use a thread pool for the blocking HTTP operations
-    with console.status(f"[bold green]Scanning directories with {os.path.basename(wordlist_path)}...") as status:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            found_directories = await asyncio.get_event_loop().run_in_executor(
-                executor,
-                dir_en.threaded_directory_enumeration,
-                target_domain,
-                dir_wordlist_items,
-                num_threads_dir
-            )
+        return {}
     
-    return set(found_directories)
+    # Use async directory enumeration for better performance and status information
+    with console.status(f"[bold green]Scanning directories with {os.path.basename(wordlist_path)}...") as status:
+        try:
+            # Run the enhanced async directory scan with status information
+            found_directories = await dir_en.async_directory_enumeration(target_domain, dir_wordlist_items, max_concurrent=num_threads_dir)
+            return found_directories
+        except Exception as e:
+            console.print(f"[red]Error during directory scan: {str(e)}[/red]")
+            return {}
 
 def display_results(target_domain, ports_found, found_subdomains, all_found_directories):
     # Create a nice table for the results
-    table = Table(title=f"[bold cyan]Scan Results for {target_domain}[/bold cyan]", show_header=True, header_style="bold magenta")
+    table = Table(title=f"[bold cyan]Scan Results for {target_domain}[/bold cyan]", show_header=True, header_style="bold magenta", width=100)
     
     # Add columns with better styling
     table.add_column("Category", style="cyan", no_wrap=True)
@@ -113,7 +110,16 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
     
     # Add directory results with more details
     if all_found_directories:
-        dirs_str = "\n".join([f"[bold]{directory}[/bold]" for directory in sorted(list(all_found_directories))])
+        dirs_details = []
+        if isinstance(all_found_directories, dict):
+            # If all_found_directories is a dictionary with status info
+            for url, status_info in sorted(all_found_directories.items()):
+                dirs_details.append(f"[bold]{url}[/bold] {status_info}")
+        else:
+            # If all_found_directories is a list or set
+            for directory in sorted(list(all_found_directories)):
+                dirs_details.append(f"[bold]{directory}[/bold]")
+        dirs_str = "\n".join(dirs_details)
         table.add_row("Directories", dirs_str)
     else:
         table.add_row("Directories", "[red]None found[/red]")
@@ -154,8 +160,14 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
         
         f.write("\n=== DIRECTORIES ===\n")
         if all_found_directories:
-            for directory in sorted(list(all_found_directories)):
-                f.write(f"{directory}\n")
+            if isinstance(all_found_directories, dict):
+                # If all_found_directories is a dictionary with status info
+                for url, status_info in sorted(all_found_directories.items()):
+                    f.write(f"{url} {status_info}\n")
+            else:
+                # If all_found_directories is a list or set
+                for directory in sorted(list(all_found_directories)):
+                    f.write(f"{directory}\n")
         else:
             f.write("None found\n")
     
@@ -218,12 +230,14 @@ async def main_async(args):
         ports_found = results[0] if not isinstance(results[0], Exception) else {}
         found_subdomains = results[1] if not isinstance(results[1], Exception) else []
         
-        # Combine directory results
-        all_found_directories = set()
-        if not isinstance(results[2], Exception):
-            all_found_directories.update(results[2])
-        if not isinstance(results[3], Exception):
-            all_found_directories.update(results[3])
+        # Process directory scan results
+        dir_results_1 = results[2] if not isinstance(results[2], Exception) else {}
+        dir_results_2 = results[3] if not isinstance(results[3], Exception) else {}
+        
+        # Combine directory results - handle dictionaries properly
+        all_found_directories = {}
+        all_found_directories.update(dir_results_1)
+        all_found_directories.update(dir_results_2)
         
         # Display the results
         display_results(target_domain, ports_found, found_subdomains, all_found_directories)

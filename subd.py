@@ -79,6 +79,13 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
     Get subdomains for a given domain using a public DNS server.
     Optimized with worker pool and better error handling.
     """
+    # Import rich console for better terminal output
+    try:
+        from rich.console import Console
+        console = Console()
+    except ImportError:
+        console = None
+
     resolver = dns.resolver.Resolver(configure=False)
     resolver.nameservers = [
         '8.8.8.8',  # Google Public DNS
@@ -89,12 +96,14 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
     found_subdomains = set()
     results_queue = Queue()
     threads = []
-    pbar = None
     stop_event = threading.Event()
 
     common_subs = import_wordlist('wordlists/subdomains.txt')
     if not common_subs:
-        cprint("[-] No common subdomains found in the wordlist. Subdomain scan might be ineffective.", 'yellow')
+        if console:
+            console.print("[yellow][-] No common subdomains found in the wordlist. Subdomain scan might be ineffective.[/yellow]")
+        else:
+            cprint("[-] No common subdomains found in the wordlist. Subdomain scan might be ineffective.", 'yellow')
         return []
 
     try:
@@ -110,15 +119,10 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
                 continue
         
         if not base_domain_valid:
-            cprint(f"[-] Warning: Base domain {domain} could not be resolved. Results may be unreliable.", 'yellow')
-
-        # Initialize progress bar with proper error handling
-        try:
-            pbar = tqdm.tqdm(total=len(common_subs), desc=colored("[*] Processing subdomains", 'cyan'), 
-                          unit="subdomain", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")
-        except Exception as e:
-            cprint(f"[-] Warning: Could not initialize progress bar: {e}", 'yellow')
-            pbar = None
+            if console:
+                console.print(f"[yellow][-] Warning: Base domain {domain} could not be resolved. Results may be unreliable.[/yellow]")
+            else:
+                cprint(f"[-] Warning: Base domain {domain} could not be resolved. Results may be unreliable.", 'yellow')
 
         def check_subdomain(sub, domain_to_check, queue_instance):
             if stop_event.is_set():
@@ -129,46 +133,96 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
                 # Use cached resolver function
                 if resolve_domain(subdomain_to_check_fqdn):
                     queue_instance.put(subdomain_to_check_fqdn)
+                    if console:
+                        console.print(f"[green][+] Found subdomain: {subdomain_to_check_fqdn}[/green]")
+                    else:
+                        cprint(f"[+] Found subdomain: {subdomain_to_check_fqdn}", 'green')
             except Exception:
                 pass  # Suppress errors within the thread
-            finally:
-                if pbar and not stop_event.is_set():
-                    try:
-                        pbar.update(1)
-                    except Exception:
-                        pass
-        
-        # Use a thread pool with improved error handling
-        batch_size = min(100, len(common_subs))  # Process in batches for better memory management
-        for i in range(0, len(common_subs), batch_size):
-            if stop_event.is_set():
-                break
-                
-            batch = common_subs[i:i+batch_size]
-            active_threads = []
+
+        # Using Rich status instead of tqdm for better terminal compatibility
+        if console:
+            with console.status(f"[cyan]Scanning {len(common_subs)} potential subdomains for {domain}...[/cyan]", spinner="dots") as status:
+                # Process subdomains in batches
+                batch_size = min(100, len(common_subs))
+                for i in range(0, len(common_subs), batch_size):
+                    if stop_event.is_set():
+                        break
+                    
+                    batch = common_subs[i:i+batch_size]
+                    active_threads = []
+                    
+                    for sub_item in batch:
+                        if stop_event.is_set():
+                            break
+                            
+                        # Limit concurrent threads to avoid resource exhaustion
+                        while len(active_threads) >= max_workers:
+                            active_threads = [t for t in active_threads if t.is_alive()]
+                            if len(active_threads) >= max_workers:
+                                time.sleep(0.1)
+                        
+                        thread = threading.Thread(target=check_subdomain, args=(sub_item, domain, results_queue))
+                        thread.daemon = True
+                        active_threads.append(thread)
+                        threads.append(thread)
+                        thread.start()
+                    
+                    # Join all threads from this batch
+                    for thread in active_threads:
+                        while thread.is_alive() and not stop_event.is_set():
+                            thread.join(timeout=0.1)
+                        if stop_event.is_set():
+                            break
+        else:
+            # Fallback to tqdm progress bar if Rich is not available
+            pbar = tqdm.tqdm(total=len(common_subs), desc=colored("[*] Processing subdomains", 'cyan'), 
+                          unit="subdomain")
             
-            for sub_item in batch:
+            # Process subdomains in batches
+            batch_size = min(100, len(common_subs))
+            for i in range(0, len(common_subs), batch_size):
                 if stop_event.is_set():
                     break
                     
-                # Limit concurrent threads to avoid resource exhaustion
-                while len(active_threads) >= max_workers:
-                    active_threads = [t for t in active_threads if t.is_alive()]
-                    if len(active_threads) >= max_workers:
-                        time.sleep(0.1)
+                batch = common_subs[i:i+batch_size]
+                active_threads = []
                 
-                thread = threading.Thread(target=check_subdomain, args=(sub_item, domain, results_queue))
-                thread.daemon = True
-                active_threads.append(thread)
-                threads.append(thread)
-                thread.start()
+                for sub_item in batch:
+                    if stop_event.is_set():
+                        break
+                        
+                    # Limit concurrent threads to avoid resource exhaustion
+                    while len(active_threads) >= max_workers:
+                        active_threads = [t for t in active_threads if t.is_alive()]
+                        if len(active_threads) >= max_workers:
+                            time.sleep(0.1)
+                    
+                    thread = threading.Thread(target=check_subdomain, args=(sub_item, domain, results_queue))
+                    thread.daemon = True
+                    active_threads.append(thread)
+                    threads.append(thread)
+                    thread.start()
+                    
+                    if pbar and not stop_event.is_set():
+                        try:
+                            pbar.update(1)
+                        except Exception:
+                            pass
+                
+                # Join all threads from this batch
+                for thread in active_threads:
+                    while thread.is_alive() and not stop_event.is_set():
+                        thread.join(timeout=0.1)
+                    if stop_event.is_set():
+                        break
             
-            # Join all threads from this batch
-            for thread in active_threads:
-                while thread.is_alive() and not stop_event.is_set():
-                    thread.join(timeout=0.1)
-                if stop_event.is_set():
-                    break
+            # Close the progress bar
+            if pbar:
+                try:
+                    pbar.close()
+                except Exception:
+                    pass
         
         # Collect results from queue
         while not results_queue.empty():
@@ -196,7 +250,12 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
                                 if item.rdtype in (dns.rdatatype.A, dns.rdatatype.CNAME):
                                     name_str = str(rrset.name)
                                     if name_str.endswith(f".{domain}") and name_str != f"{domain}.":
-                                        found_subdomains.add(name_str[:-1])  # Remove trailing dot
+                                        subdomain = name_str[:-1]  # Remove trailing dot
+                                        found_subdomains.add(subdomain)
+                                        if console:
+                                            console.print(f"[green][+] Found subdomain via zone transfer: {subdomain}[/green]")
+                                        else:
+                                            cprint(f"[+] Found subdomain via zone transfer: {subdomain}", 'green')
                 except Exception:
                     continue
         except Exception:
@@ -206,20 +265,19 @@ def get_subdomains_w_pub_dns(domain, max_workers=20):
 
     except KeyboardInterrupt:
         stop_event.set()
-        cprint("\n[-] Subdomain enumeration interrupted by user.", 'red', attrs=['bold'])
+        if console:
+            console.print("\n[red][-] Subdomain enumeration interrupted by user.[/red]")
+        else:
+            cprint("\n[-] Subdomain enumeration interrupted by user.", 'red', attrs=['bold'])
         return list(found_subdomains)  # Return partial results
     except Exception as e:
         stop_event.set()
-        cprint(f"[-] An error occurred during subdomain enumeration: {e}", 'red', attrs=['bold'])
+        if console:
+            console.print(f"\n[red][-] An error occurred during subdomain enumeration: {e}[/red]")
+        else:
+            cprint(f"[-] An error occurred during subdomain enumeration: {e}", 'red', attrs=['bold'])
         return list(found_subdomains)  # Return partial results
     finally:
-        # Always clean up progress bar
-        if pbar:
-            try:
-                pbar.close()
-            except Exception:
-                pass
-        
         # Signal all threads to stop
         stop_event.set()
         

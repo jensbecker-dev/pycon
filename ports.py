@@ -112,7 +112,7 @@ def scan_all_ports(target: str, ports: List[int], timeout: float = DEFAULT_TIMEO
     return open_ports
 
 def threaded_port_scan(target: str, ports: List[int], num_threads: int = 10, 
-                       timeout: float = DEFAULT_TIMEOUT) -> Dict[int, bool]:
+                       timeout: float = DEFAULT_TIMEOUT) -> Dict[int, Any]:
     """
     Perform port scanning using multiple threads.
     Optimized version with better resource management and cancellation support.
@@ -127,63 +127,55 @@ def threaded_port_scan(target: str, ports: List[int], num_threads: int = 10,
     for port in ports:
         queue.put(port)
 
-    # Initialize progress bar with better formatting
-    pbar = tqdm.tqdm(total=len(ports), desc=colored(f"[*] Scanning ports on {target}", 'cyan'), 
-                   unit="port", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")
-
-    def worker():
-        while not stop_event.is_set():
-            try:
-                # Use timeout to allow checking stop_event periodically
-                port = queue.get(block=True, timeout=0.1)
-            except Empty:
-                continue  # Queue empty or timeout, check stop_event again
-            
-            if stop_event.is_set():
-                queue.task_done()
-                break
-
-            # Use optimized port_scan function
-            if port_scan(target, port, timeout):
-                with open_ports_lock:
-                    open_ports[port] = True
-                    service = identify_service(target, port)
-                    service_info = f" ({service})" if service else ""
-                    cprint(f"[+] Port {port}{service_info} is open on {target}", 'green')
-            
-            queue.task_done()
-            if pbar and not stop_event.is_set():
+    # Use Rich's Progress for proper terminal formatting instead of tqdm
+    with console.status(f"[bold cyan]Scanning ports on {target}...", spinner="dots") as status:
+        def worker():
+            while not stop_event.is_set():
                 try:
-                    pbar.update(1)
-                except Exception:
-                    pass  # Ignore errors during progress bar update
-    
-    try:
-        # Create and start threads in batches to avoid system resource exhaustion
-        batch_size = min(num_threads, 50)  # Cap at 50 threads maximum
-        
-        for _ in range(batch_size):
-            thread = threading.Thread(target=worker)
-            thread.daemon = True
-            thread.start()
-            threads.append(thread)
+                    # Use timeout to allow checking stop_event periodically
+                    port = queue.get(block=True, timeout=0.1)
+                except Empty:
+                    continue  # Queue empty or timeout, check stop_event again
+                
+                if stop_event.is_set():
+                    queue.task_done()
+                    break
 
-        # Wait for queue to be processed or for interrupt
+                # Use optimized port_scan function
+                if port_scan(target, port, timeout):
+                    with open_ports_lock:
+                        # Identify service and store it in open_ports
+                        service = identify_service(target, port)
+                        open_ports[port] = service
+                        service_info = f" ({service})" if service else ""
+                        console.print(f"[green][+] Port {port}{service_info} is open on {target}[/green]")
+                
+                queue.task_done()
+        
         try:
-            queue.join()
-        except KeyboardInterrupt:
-            cprint(colored("\n[*] Port scanning interrupted by user. Cleaning up...", 'yellow', attrs=['bold']))
-            stop_event.set()
+            # Create and start threads in batches to avoid system resource exhaustion
+            batch_size = min(num_threads, 50)  # Cap at 50 threads maximum
+            
+            for _ in range(batch_size):
+                thread = threading.Thread(target=worker)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
 
-    finally:
-        # Clean up resources
-        if pbar:
-            pbar.close()
-        
-        # Give threads time to exit cleanly
-        stop_event.set()
-        for thread in threads:
-            thread.join(timeout=0.5)
+            # Wait for queue to be processed or for interrupt
+            queue.join()
+            
+        except KeyboardInterrupt:
+            console.print("[yellow]\n[*] Port scanning interrupted by user. Cleaning up...[/yellow]")
+            stop_event.set()
+            raise
+
+        finally:
+            # Clean up resources
+            stop_event.set()
+            # Give threads time to exit cleanly
+            for thread in threads:
+                thread.join(timeout=0.5)
 
     return open_ports
 
