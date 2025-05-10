@@ -1,0 +1,15 @@
+PYCON Scan Results for localhost
+Timestamp: 2025-05-10 02:49:50
+
+=== OPEN PORTS ===
+PORT     SERVICE             DETAILS
+------------------------------------------
+22       SSH                  (SSH-2.0-OpenSSH_9.9p1 Debian-3)
+631      Unknown             
+3390     Unknown             
+
+=== SUBDOMAINS ===
+None found
+
+=== DIRECTORIES ===
+None found

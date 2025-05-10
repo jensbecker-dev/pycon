@@ -8,14 +8,12 @@ import asyncio
 from dir_en import import_wordlist
 from pyfiglet import figlet_format
 from termcolor import cprint, colored
-import tqdm
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
 from rich.table import Table
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-import time
 
 # Initialize rich console
 console = Console()
@@ -39,6 +37,9 @@ def banner():
 async def run_port_scan(target_domain, ports_list, num_threads_ports):
     console.print("\n[yellow]Starting port scan...[/yellow]")
     
+    # Show number of ports being scanned
+    console.print(f"[cyan]Scanning {len(ports_list)} ports on {target_domain} using {num_threads_ports} threads[/cyan]")
+    
     # Use a thread pool for the blocking port scan operation
     with ThreadPoolExecutor(max_workers=1) as executor:
         # Run the port scan in the executor to prevent blocking the event loop
@@ -47,8 +48,15 @@ async def run_port_scan(target_domain, ports_list, num_threads_ports):
             ports.threaded_port_scan, 
             target_domain, 
             ports_list, 
-            num_threads_ports
+            num_threads_ports,
+            2.0  # Increased timeout for better version detection
         )
+    
+    # Display a summary of the scan results
+    if ports_found:
+        console.print(f"\n[green]Port scan completed: Found {len(ports_found)} open ports on {target_domain}[/green]")
+    else:
+        console.print(f"\n[yellow]Port scan completed: No open ports found on {target_domain}[/yellow]")
     
     return ports_found
 
@@ -116,14 +124,27 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
     table.add_column("Category", style="cyan", no_wrap=True)
     table.add_column("Results", style="green")
     
-    # Add port scan results with more details
+    # Add port scan results with enhanced visual presentation
     if ports_found:
-        port_details = []
+        # Create a nested table for ports
+        port_table = Table(show_header=True, header_style="bold cyan", box=None)
+        port_table.add_column("Port", style="green", justify="right")
+        port_table.add_column("Service", style="yellow")
+        port_table.add_column("Details", style="blue")
+        
         for port in sorted(list(ports_found.keys())):
-            service = ports_found[port] if isinstance(ports_found[port], str) else "Unknown"
-            port_details.append(f"[bold]{port}[/bold]: {service}")
-        ports_str = "\n".join(port_details)
-        table.add_row("Open Ports", ports_str)
+            service_info = ports_found[port]
+            
+            # Parse service info to separate service name from version details
+            if isinstance(service_info, str) and "(" in service_info:
+                service_name, version_info = service_info.split("(", 1)
+                version_info = f"({version_info}"  # Add back the opening parenthesis
+                port_table.add_row(str(port), service_name.strip(), version_info)
+            else:
+                service = service_info if isinstance(service_info, str) else "Unknown"
+                port_table.add_row(str(port), service, "")
+                
+        table.add_row("Open Ports", port_table)
     else:
         table.add_row("Open Ports", "[red]None found[/red]")
     
@@ -153,9 +174,9 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
     console.print("\n")
     console.print(table)
     
-    # Save results to file
+    # Save results to file with more detailed formatting
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"results_{target_domain}_{timestamp}.txt"
+    filename = f"results_{target_domain.replace('.', '_')}_{timestamp}.txt"
     
     # Ensure results directory exists
     results_dir = "results"
@@ -171,9 +192,17 @@ def display_results(target_domain, ports_found, found_subdomains, all_found_dire
         
         f.write("=== OPEN PORTS ===\n")
         if ports_found:
+            f.write("PORT     SERVICE             DETAILS\n")
+            f.write("------------------------------------------\n")
             for port in sorted(list(ports_found.keys())):
-                service = ports_found[port] if isinstance(ports_found[port], str) else ""
-                f.write(f"Port {port} {service}\n")
+                service_info = ports_found[port]
+                if isinstance(service_info, str) and "(" in service_info:
+                    service_name, details = service_info.split("(", 1)
+                    details = f"({details}"
+                    f.write(f"{port:<8} {service_name.strip():<20} {details}\n")
+                else:
+                    service = service_info if isinstance(service_info, str) else "Unknown"
+                    f.write(f"{port:<8} {service:<20}\n")
         else:
             f.write("None found\n")
         

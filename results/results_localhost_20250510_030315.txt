@@ -1,0 +1,16 @@
+PYCON Scan Results for localhost
+Timestamp: 2025-05-10 03:03:15
+
+=== OPEN PORTS ===
+PORT     SERVICE             DETAILS
+------------------------------------------
+22       SSH                  (SSH-2.0-OpenSSH_9.9p1 Debian-3)
+631      CUPS                 (CUPS/2.4)
+3390     RDP                  (Microsoft Terminal Services)
+8000     HTTP                 (SimpleHTTP/0.6 Python/3.13.2)
+
+=== SUBDOMAINS ===
+None found
+
+=== DIRECTORIES ===
+None found
